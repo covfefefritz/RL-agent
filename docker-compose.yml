@@ -1,0 +1,36 @@
+version: '3.3'
+
+services:
+  api:
+    build: .
+    command: python /app/api.py
+    volumes:
+      - ./src:/app
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/get_data"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  agent:
+    build: .
+    command: python /app/train.py
+    volumes:
+      - ./src:/app
+    depends_on:
+      api:
+        condition: service_healthy
+
+#  grid_search:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#    command: python /app/grid_search.py
+#    volumes:
+#      - ./src:/app
+#    depends_on:
+#      api:
+#        condition: service_healthy
+
