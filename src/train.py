@@ -17,7 +17,7 @@ if __name__ == "__main__":
     # Save the model again
     model.save('lstm_model_v3_simple_new.h5')
 
-    lstm_predictor = LSTMPredictor(model_path='lstm_model_v3_simple_new.h5', scaler_path='scaler_v3_simple.pkl')
+    lstm_predictor = LSTMPredictor(model_path='./lstm_model_v3_simple_new.h5', scaler_path='./scaler_v3_simple.pkl')
     trade_executor = TradeExecutor(data_handler)
     env = TradingEnv(data_handler, lstm_predictor)
 

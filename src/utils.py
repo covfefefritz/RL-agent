@@ -1,18 +1,32 @@
 import pandas as pd
 import numpy as np
 
-def add_time_features(data):
-    data['hour'] = data.index.hour
-    data['day_of_week'] = data.index.dayofweek
+def add_time_features(df):
+    # Ensure the index is a DateTimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+
+    if 'hour' not in df.columns:
+        df['hour'] = df.index.hour
+    if 'day_of_week' not in df.columns:
+        df['day_of_week'] = df.index.dayofweek
 
     # Cyclical encoding for hour and day of week
-    data['hour_sin'] = np.sin(2 * np.pi * data['hour'] / 24)
-    data['hour_cos'] = np.cos(2 * np.pi * data['hour'] / 24)
-    data['day_of_week_sin'] = np.sin(2 * np.pi * data['day_of_week'] / 7)
-    data['day_of_week_cos'] = np.cos(2 * np.pi * data['day_of_week'] / 7)
+    df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+    df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+    df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+    df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
 
-    data.drop(columns=['hour', 'day_of_week'], inplace=True)
-    return data
+    df.drop(columns=['hour', 'day_of_week'], inplace=True)
+    return df
+
+def create_sequences(data, seq_length):
+    sequences = []
+    labels = []
+    for i in range(len(data) - seq_length):
+        sequences.append(data[i:i+seq_length])
+        labels.append(data[i+seq_length, 3])  # Assuming 'Close' is the 4th feature (index 3)
+    return np.array(sequences), np.array(labels)
 
 def load_data(file_path, scaler):
     date_format = "%d.%m.%Y %H:%M:%S.%f"
@@ -35,11 +49,3 @@ def load_data(file_path, scaler):
     scaled_prices = scaler.fit_transform(prices)
     
     return scaled_prices, data
-
-def create_sequences(data, seq_length):
-    sequences = []
-    labels = []
-    for i in range(len(data) - seq_length):
-        sequences.append(data[i:i+seq_length])
-        labels.append(data[i+seq_length, 3])  # Assuming 'Close' is the 4th feature (index 3)
-    return np.array(sequences), np.array(labels)
