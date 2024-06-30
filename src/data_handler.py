@@ -60,6 +60,18 @@ class DataHandler:
                     return pd.DataFrame(columns=required_columns)  # Return empty DataFrame with required columns
 
             return historical_df.to_dict(orient='records')
+        
+    def place_order(self, trade):
+        new_data = self.data_fetcher.fetch_new_data() 
+        
+        if trade['action'] == 'buy':
+            success = new_data['Close'] <= trade['price']  # place_buy_order(price)
+        elif trade['action'] == 'sell':
+            success = new_data['Close'] >= trade['price']  # place_sell_order(price)
+        else:
+            success = False
+        return success
+        
 
     def log_trade(self, trade):
         with self.lock:
@@ -68,6 +80,9 @@ class DataHandler:
     def get_trade_log(self):
         with self.lock:
             return self.trade_log
+    
+    def calculate_performance(self):
+        return 0
 
 class DataFetcher:
     def __init__(self, api_url):

@@ -6,28 +6,33 @@ import logging
 from utils import add_time_features
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 class TradingEnv(gym.Env):
-    def __init__(self, data_handler, lstm_predictor, seq_length=60):
+    def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=1000):
         super(TradingEnv, self).__init__()
         self.data_handler = data_handler
         self.lstm_predictor = lstm_predictor
+        self.rl_trader = rl_trader
         self.seq_length = seq_length
+        self.max_steps = max_steps
         self.action_space = spaces.Discrete(3)  # Buy, Hold, Sell
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
-        logger.info("TradingEnv initialized with seq_length: %d", self.seq_length)
+        self.done = False
+        logger.info("TradingEnv initialized with seq_length: %d and max_steps: %d", self.seq_length, self.max_steps)
 
-    def reset(self, **kwargs):  # Accept arbitrary keyword arguments
+    def reset(self, **kwargs):
         logger.info("Environment reset")
         self.data_handler.index = 0
         historical_data = self.data_handler.get_historical_data(self.seq_length)
-        
+
         if not historical_data:
             logger.error("Not enough historical data to initialize the environment.")
             return np.zeros(self.observation_space.shape), {}
-        
-        self.lstm_predictor.data = historical_data
+
+        self.lstm_predictor.reset()
+        for data in historical_data:
+            self.lstm_predictor.add_data(data)
         self.lstm_predictor.update_data_and_predict()
         observation = self._get_observation(historical_data[-1])
         logger.debug("Initial observation: %s", observation)
@@ -44,27 +49,12 @@ class TradingEnv(gym.Env):
         self.lstm_predictor.update_data_and_predict()
 
         state = self._get_observation(current_data)
-        current_price = current_data['Close']
-        timestamp = current_data.get('Gmt time', None)
-        if timestamp is None:
-            logger.error("Timestamp 'Gmt time' is missing from current_data")
-            return np.zeros(self.observation_space.shape), 0, True, False, {}
+        action_info = self.rl_trader.perform_action(current_data, action, self.data_handler)
+        reward = self.calculate_reward(current_data, action_info)
+        self.done = self._check_done()
 
-        trade = {
-            'action': action,
-            'price': current_price,
-            'timestamp': timestamp,
-            'size': 1 if action in [0, 1] else 0
-        }
-        logger.debug("Trade executed: %s", trade)
-        self.data_handler.log_trade(trade)
-
-        done = False  # Define your own condition for termination
-        truncated = False  # Define your own condition for truncation
-        reward = self.calculate_reward(trade)
-        logger.debug("New state: %s, Reward: %f, Done: %s, Truncated: %s", state, reward, done, truncated)
-        return state, reward, done, truncated, {}
-
+        logger.debug("New state: %s, Reward: %f, Done: %s", state, reward, self.done)
+        return state, reward, self.done, False, {}
 
     def _get_observation(self, current_data=None):
         if current_data is None:
@@ -72,6 +62,9 @@ class TradingEnv(gym.Env):
             return np.zeros(self.observation_space.shape)
 
         historical_data = self.data_handler.get_historical_data(self.seq_length)
+        if not historical_data:
+            return np.zeros(self.observation_space.shape)
+
         historical_df = pd.DataFrame(historical_data)
 
         if 'Gmt time' in historical_df.columns:
@@ -85,20 +78,38 @@ class TradingEnv(gym.Env):
 
         historical_df = add_time_features(historical_df)
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 'day_of_week_cos']
-        
+
         if not all(col in historical_df.columns for col in required_columns):
             logger.error(f"One or more required columns are missing in the historical data: {required_columns}")
             return np.zeros(self.observation_space.shape)
 
         features = current_data
-        state_features = historical_df[required_columns]
-
         prediction = self.lstm_predictor.predictions[-1] if len(self.lstm_predictor.predictions) > 0 else 0.0
         state = np.array([
             features['Open'], features['High'], features['Low'], features['Close'], features['Volume'],
-            features['hour_sin'], features['hour_cos'], features['day_of_week_sin'], features['day_of_week_cos'], 
+            features['hour_sin'], features['hour_cos'], features['day_of_week_sin'], features['day_of_week_cos'],
             prediction
         ])
 
         logger.debug("Observation state: %s", state)
         return state
+
+    def calculate_reward(self, current_data, action_info):
+        reward = 0
+        current_price = current_data['Close']
+
+        if action_info['action'] == 'buy':
+            reward = -current_price  # Negative because we spent money
+        elif action_info['action'] == 'sell':
+            if self.rl_trader.current_position == 1:  # Closing a long position
+                reward = current_price - self.rl_trader.entry_price
+            elif self.rl_trader.current_position == -1:  # Closing a short position
+                reward = self.rl_trader.entry_price - current_price
+
+        logger.debug("Reward calculated: %f", reward)
+        return reward
+
+    def _check_done(self):
+        if self.data_handler.index >= self.max_steps:
+            return True
+        return False
