@@ -5,8 +5,6 @@ from tensorflow.keras.models import load_model
 import logging
 from utils import add_time_features, create_sequences
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 class LSTMPredictor:
     def __init__(self, model_path, scaler_path):
@@ -15,7 +13,12 @@ class LSTMPredictor:
         self.seq_length = 60
         self.data = []
         self.predictions = []  # Initialize as an empty list
-        logger.info("LSTMPredictor initialized with model_path: %s and scaler_path: %s", model_path, scaler_path)
+        logging.info("LSTMPredictor initialized with model_path: %s and scaler_path: %s", model_path, scaler_path)
+
+    def reset(self):
+        self.data = []
+        self.predictions = []
+        logging.info("LSTMPredictor has been reset.")
 
     def add_data(self, new_data):
         self.data.append(new_data)

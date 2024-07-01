@@ -63,13 +63,14 @@ class DataHandler:
         
     def place_order(self, trade):
         new_data = self.data_fetcher.fetch_new_data() 
-        
+
         if trade['action'] == 'buy':
             success = new_data['Close'] <= trade['price']  # place_buy_order(price)
         elif trade['action'] == 'sell':
             success = new_data['Close'] >= trade['price']  # place_sell_order(price)
         else:
             success = False
+        
         return success
         
 

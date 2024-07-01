@@ -19,6 +19,12 @@ class TradingEnv(gym.Env):
         self.action_space = spaces.Discrete(3)  # Buy, Hold, Sell
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
         self.done = False
+        self.performance_metrics = {
+            "total_trades": 0,
+            "successful_trades": 0,
+            "failed_trades": 0,
+            "total_profit": 0,
+        }
         logger.info("TradingEnv initialized with seq_length: %d and max_steps: %d", self.seq_length, self.max_steps)
 
     def reset(self, **kwargs):
@@ -26,7 +32,7 @@ class TradingEnv(gym.Env):
         self.data_handler.index = 0
         historical_data = self.data_handler.get_historical_data(self.seq_length)
 
-        if not historical_data:
+        if len(historical_data) < self.seq_length:
             logger.error("Not enough historical data to initialize the environment.")
             return np.zeros(self.observation_space.shape), {}
 
@@ -53,6 +59,13 @@ class TradingEnv(gym.Env):
         reward = self.calculate_reward(current_data, action_info)
         self.done = self._check_done()
 
+        # Log performance metrics
+        logger.info("Performance metrics:\nTotal trades: %d\nSuccessful trades: %d\nFailed trades: %d\nTotal Profit: %f",
+                    self.performance_metrics["total_trades"], 
+                    self.performance_metrics["successful_trades"], 
+                    self.performance_metrics["failed_trades"],
+                    self.performance_metrics["total_profit"])
+
         logger.debug("New state: %s, Reward: %f, Done: %s", state, reward, self.done)
         return state, reward, self.done, False, {}
 
@@ -62,7 +75,8 @@ class TradingEnv(gym.Env):
             return np.zeros(self.observation_space.shape)
 
         historical_data = self.data_handler.get_historical_data(self.seq_length)
-        if not historical_data:
+        if len(historical_data) < self.seq_length:
+            logger.error(f"Not enough historical data. Needed: {self.seq_length}, available: {len(historical_data)}")
             return np.zeros(self.observation_space.shape)
 
         historical_df = pd.DataFrame(historical_data)
@@ -98,18 +112,30 @@ class TradingEnv(gym.Env):
         reward = 0
         current_price = current_data['Close']
 
-        if action_info['action'] == 'buy':
-            reward = -current_price  # Negative because we spent money
-        elif action_info['action'] == 'sell':
-            if self.rl_trader.current_position == 1:  # Closing a long position
-                reward = current_price - self.rl_trader.entry_price
-            elif self.rl_trader.current_position == -1:  # Closing a short position
-                reward = self.rl_trader.entry_price - current_price
+        if 'action' in action_info:
+            if action_info['success'] and action_info['action'] in ['close_long', 'close_short']:
+                if self.rl_trader.entry_price is None:
+                    logger.error("Entry price is None when trying to close a position. Action: %s", action_info['action'])
+                    return 0  # No reward if entry price is not set
+
+                if action_info['action'] == 'close_long':
+                    reward = (current_price - self.rl_trader.entry_price) * 10000  # pips for long position
+                elif action_info['action'] == 'close_short':
+                    reward = (self.rl_trader.entry_price - current_price) * 10000  # pips for short position
+
+                self.performance_metrics["total_trades"] += 1
+                if reward > 0:
+                    self.performance_metrics["successful_trades"] += 1
+                else:
+                    self.performance_metrics["failed_trades"] += 1
+                self.performance_metrics["total_profit"] += reward
 
         logger.debug("Reward calculated: %f", reward)
         return reward
 
     def _check_done(self):
+        if self.performance_metrics["total_profit"] < -3000:
+            return True
         if self.data_handler.index >= self.max_steps:
             return True
         return False
