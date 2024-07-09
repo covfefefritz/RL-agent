@@ -9,40 +9,48 @@ class LearningTrader:
     def perform_action(self, current_data, action, data_handler):
         spread = 0.0002
         current_price = current_data['Close']
-        trade = {'action': 'hold', 'price': current_price, 'timestamp': current_data['Gmt time'], 'size': 0, 'success': False}
+        trade = {'action': 'hold', 'price': None, 'timestamp': current_data['Gmt time'], 'size': 0, 'success': False}
 
         if action == 0:  # Buy
             if self.current_position == 0:
-                trade = {'action': 'buy', 'price': current_price + spread, 'timestamp': current_data['Gmt time'], 'size': 1}
-                trade['success'] = data_handler.place_order(trade)
+                trade = {'action': 'buy', 'price': None, 'timestamp': current_data['Gmt time'], 'size': 1}
+                trade['success'] = data_handler.place_order(trade, 'buy', spread)
                 if trade['success']:
-                    self.entry_price = trade['price']
-                    self.current_position = 1
-                    self.trades.append(trade)  # Add trade only if successful
+                    logging.info("Buy order placed: %s", trade)
             elif self.current_position == -1:
-                trade = {'action': 'close_short', 'price': current_price + spread, 'timestamp': current_data['Gmt time'], 'size': 1}
-                trade['success'] = data_handler.place_order(trade)
+                trade = {'action': 'close_short', 'price': None, 'timestamp': current_data['Gmt time'], 'size': 1}
+                trade['success'] = data_handler.place_order(trade, 'close_short', spread)
                 if trade['success']:
-                    self.trades.append(trade)  # Add trade only if successful
-                    self.entry_price = None
-                    self.current_position = 0
-            logging.info("Buy successful: %s", trade['success'])
+                    logging.info("Close short order placed: %s", trade)
 
         elif action == 1:  # Sell
             if self.current_position == 0:
-                trade = {'action': 'sell', 'price': current_price - spread, 'timestamp': current_data['Gmt time'], 'size': 1}
-                trade['success'] = data_handler.place_order(trade)
+                trade = {'action': 'sell', 'price': None, 'timestamp': current_data['Gmt time'], 'size': 1}
+                trade['success'] = data_handler.place_order(trade, 'sell', spread)
                 if trade['success']:
-                    self.entry_price = trade['price']
-                    self.current_position = -1
-                    self.trades.append(trade)  # Add trade only if successful
+                    logging.info("Sell order placed: %s", trade)
             elif self.current_position == 1:
-                trade = {'action': 'close_long', 'price': current_price - spread, 'timestamp': current_data['Gmt time'], 'size': 1}
-                trade['success'] = data_handler.place_order(trade)
+                trade = {'action': 'close_long', 'price': None, 'timestamp': current_data['Gmt time'], 'size': 1}
+                trade['success'] = data_handler.place_order(trade, 'close_long', spread)
                 if trade['success']:
-                    self.trades.append(trade)  # Add trade only if successful
-                    self.entry_price = None
-                    self.current_position = 0
-            logging.info("Sell successful: %s", trade['success'])
+                    logging.info("Close long order placed: %s", trade)
 
+        logging.info("Return from perform action function")
         return trade
+
+
+    def update_position(self, filled_trade):
+        if filled_trade and filled_trade['success']:
+            if filled_trade['action'] == 'buy':
+                self.entry_price = filled_trade['price']
+                self.current_position = 1
+            elif filled_trade['action'] == 'sell':
+                self.entry_price = filled_trade['price']
+                self.current_position = -1
+            elif filled_trade['action'] == 'close_long' or filled_trade['action'] == 'close_short':
+                self.entry_price = None
+                self.current_position = 0
+            self.trades.append(filled_trade)  # Add trade only if successful
+            logging.info("Trade filled and position updated: %s", filled_trade)
+        else:
+            logging.warning("No trade was filled to update position.")

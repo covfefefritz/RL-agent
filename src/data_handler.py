@@ -5,6 +5,9 @@ import requests
 import time
 from utils import add_time_features
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
 class DataHandler:
     def __init__(self, api_url):
         self.api_url = api_url
@@ -13,6 +16,8 @@ class DataHandler:
         self.lock = Lock()
         self.trade_log = []
         self.historical_data = []
+        self.pending_trade = None
+        self.pending_order = False
 
     def get_current_data(self):
         with self.lock:
@@ -30,8 +35,10 @@ class DataHandler:
                 current_data_dict = df_new_data.iloc[0].to_dict()
                 current_data_dict['Gmt time'] = df_new_data.index[0]
                 self.historical_data.append(current_data_dict)
+                logging.info(f"Fetched current data: {current_data_dict}")
                 return current_data_dict
             else:
+                logging.warning("No new data fetched")
                 return None
 
     def get_historical_data(self, seq_length):
@@ -60,28 +67,80 @@ class DataHandler:
                     return pd.DataFrame(columns=required_columns)  # Return empty DataFrame with required columns
 
             return historical_df.to_dict(orient='records')
-        
-    def place_order(self, trade):
-        new_data = self.data_fetcher.fetch_new_data() 
 
-        if trade['action'] == 'buy':
-            success = new_data['Close'] <= trade['price']  # place_buy_order(price)
-        elif trade['action'] == 'sell':
-            success = new_data['Close'] >= trade['price']  # place_sell_order(price)
+    def place_order(self, trade, action_type, spread):
+        logging.debug(f"DataHandler: Placing order")
+        if self.pending_order == True:
+            logging.warning("There is already a pending order")
+            return False
+
+        self.pending_order = True 
+
+        trade['price'] = None  # Price to be set when order is filled
+        self.pending_trade = (trade, action_type, spread)
+        logging.info(f"Order placed: {trade}, Action: {action_type}, Spread: {spread}")
+        logging.debug(f"Pending order set in DataHandler: {self.pending_trade}, {self.pending_order}")
+        return True
+
+    # In DataHandler
+    def fill_order(self):
+        logging.debug("fill_order: Attempting to fill order")
+        if self.pending_order == False:
+            logging.info("fill_order: No pending order to fill")
+            return None
+
+        trade, action_type, spread = self.pending_trade
+        logging.debug(f"Pending order: {trade}, Action type: {action_type}, Spread: {spread}")
+        current_data = self.get_current_data()  # Fetch the most recent data point
+
+        if not current_data:
+            logging.error("No current data available for filling order.")
+            return None
+
+        logging.debug(f"Current data for filling order: {current_data}")
+
+        if action_type == 'buy':
+            trade['price'] = current_data['Open'] + spread
+            success = True
+        elif action_type == 'sell':
+            trade['price'] = current_data['Open'] - spread
+            success = True
+        elif action_type == 'close_long':
+            trade['price'] = current_data['Open'] - spread
+            success = True
+        elif action_type == 'close_short':
+            trade['price'] = current_data['Open'] + spread
+            success = True
         else:
             success = False
-        
-        return success
-        
+
+        trade['success'] = success
+        logging.debug(f"Trade success: {success}, Trade: {trade}")
+
+        if success:
+            logging.debug("Order filled successfully")
+            self.pending_order = False  # Clear pending order only if filled
+            self.pending_trade = None  # Clear pending order only if filled
+            self.log_trade(trade)  # Log the trade if it was successful
+            logging.info(f"Order filled: {trade}")
+        else:
+            logging.warning(f"Order failed to fill: {trade}")
+
+        return trade
+
+
+
+
 
     def log_trade(self, trade):
         with self.lock:
             self.trade_log.append(trade)
+            logging.info(f"Trade logged: {trade}")
 
     def get_trade_log(self):
         with self.lock:
             return self.trade_log
-    
+
     def calculate_performance(self):
         return 0
 
@@ -100,6 +159,7 @@ class DataFetcher:
                 response.raise_for_status()
                 new_data = response.json()
                 if new_data:
+                    # Assume new_data has the required hourly OHLC format
                     logging.debug(f"Fetched new data: {new_data}")
                     time.sleep(0.1)
                     return new_data

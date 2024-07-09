@@ -6,7 +6,7 @@ import logging
 from utils import add_time_features
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 class TradingEnv(gym.Env):
     def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=1000):
@@ -19,6 +19,7 @@ class TradingEnv(gym.Env):
         self.action_space = spaces.Discrete(3)  # Buy, Hold, Sell
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
         self.done = False
+        #self.pending_order = False
         self.performance_metrics = {
             "total_trades": 0,
             "successful_trades": 0,
@@ -34,6 +35,7 @@ class TradingEnv(gym.Env):
 
         if len(historical_data) < self.seq_length:
             logger.error("Not enough historical data to initialize the environment.")
+            self.done = True
             return np.zeros(self.observation_space.shape), {}
 
         self.lstm_predictor.reset()
@@ -42,6 +44,8 @@ class TradingEnv(gym.Env):
         self.lstm_predictor.update_data_and_predict()
         observation = self._get_observation(historical_data[-1])
         logger.debug("Initial observation: %s", observation)
+        self.done = False
+        self.data_handler.pending_order = False
         return observation, {}
 
     def step(self, action):
@@ -49,15 +53,32 @@ class TradingEnv(gym.Env):
         current_data = self.data_handler.get_current_data()
         if not current_data:
             logger.warning("No current data available")
-            return np.zeros(self.observation_space.shape), 0, True, False, {}
+            self.done = True
+            return np.zeros(self.observation_space.shape), 0, self.done, False, {}
 
         self.lstm_predictor.add_data(current_data)
         self.lstm_predictor.update_data_and_predict()
 
         state = self._get_observation(current_data)
-        action_info = self.rl_trader.perform_action(current_data, action, self.data_handler)
-        reward = self.calculate_reward(current_data, action_info)
-        self.done = self._check_done()
+
+        if self.data_handler.pending_order == False:
+            logger.debug("No pending order. Performing action.")
+            action_info = self.rl_trader.perform_action(current_data, action, self.data_handler)
+            logger.debug("Trade order placed: %s", action_info)
+        else:
+            logger.debug("Pending order exists. Skipping perform_action.")
+            action_info = None
+
+        # Fill the order to get the filled trade
+        filled_trade = self.data_handler.fill_order()
+        if filled_trade:
+            logger.debug("Filled trade: %s", filled_trade)
+            self.rl_trader.update_position(filled_trade)
+            reward = self.calculate_reward(current_data, filled_trade)
+            self.done = self._check_done()
+        else:
+            logger.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_trade)
+            reward = 0
 
         # Log performance metrics
         logger.info("Performance metrics:\nTotal trades: %d\nSuccessful trades: %d\nFailed trades: %d\nTotal Profit: %f",
@@ -68,6 +89,7 @@ class TradingEnv(gym.Env):
 
         logger.debug("New state: %s, Reward: %f, Done: %s", state, reward, self.done)
         return state, reward, self.done, False, {}
+
 
     def _get_observation(self, current_data=None):
         if current_data is None:
@@ -111,24 +133,30 @@ class TradingEnv(gym.Env):
     def calculate_reward(self, current_data, action_info):
         reward = 0
         current_price = current_data['Close']
+        logger.debug("Current price: %f", current_price)
+        
+        if action_info:
+            logger.debug("Action info: %s", action_info)
+        
+        if action_info and 'action' in action_info:
+            if action_info['success']:
+                if action_info['action'] in ['close_long', 'close_short']:
+                    if self.rl_trader.entry_price is None:
+                        logger.error("Entry price is None when trying to close a position. Action: %s", action_info['action'])
+                        return 0  # No reward if entry price is not set
 
-        if 'action' in action_info:
-            if action_info['success'] and action_info['action'] in ['close_long', 'close_short']:
-                if self.rl_trader.entry_price is None:
-                    logger.error("Entry price is None when trying to close a position. Action: %s", action_info['action'])
-                    return 0  # No reward if entry price is not set
+                    logger.debug("Entry price: %f", self.rl_trader.entry_price)
+                    if action_info['action'] == 'close_long':
+                        reward = (current_price - self.rl_trader.entry_price) * 10000  # pips for long position
+                    elif action_info['action'] == 'close_short':
+                        reward = (self.rl_trader.entry_price - current_price) * 10000  # pips for short position
 
-                if action_info['action'] == 'close_long':
-                    reward = (current_price - self.rl_trader.entry_price) * 10000  # pips for long position
-                elif action_info['action'] == 'close_short':
-                    reward = (self.rl_trader.entry_price - current_price) * 10000  # pips for short position
-
-                self.performance_metrics["total_trades"] += 1
-                if reward > 0:
-                    self.performance_metrics["successful_trades"] += 1
-                else:
-                    self.performance_metrics["failed_trades"] += 1
-                self.performance_metrics["total_profit"] += reward
+                    self.performance_metrics["total_trades"] += 1
+                    if reward > 0:
+                        self.performance_metrics["successful_trades"] += 1
+                    else:
+                        self.performance_metrics["failed_trades"] += 1
+                    self.performance_metrics["total_profit"] += reward
 
         logger.debug("Reward calculated: %f", reward)
         return reward

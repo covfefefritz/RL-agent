@@ -1,4 +1,4 @@
-version: '3.3'
+version: '3.8'
 
 services:
   api:
@@ -15,7 +15,9 @@ services:
       retries: 3
 
   agent:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     command: python /app/train.py
     volumes:
       - ./src:/app
