@@ -6,7 +6,7 @@ import time
 from utils import add_time_features
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 class DataHandler:
     def __init__(self, api_url):
@@ -18,6 +18,7 @@ class DataHandler:
         self.historical_data = []
         self.pending_trade = None
         self.pending_order = False
+        self.trade_log_file = 'trade_log.txt'
 
     def get_current_data(self):
         with self.lock:
@@ -122,20 +123,19 @@ class DataHandler:
             self.pending_order = False  # Clear pending order only if filled
             self.pending_trade = None  # Clear pending order only if filled
             self.log_trade(trade)  # Log the trade if it was successful
-            logging.info(f"Order filled: {trade}")
+           # logging.info(f"Order filled: {trade}")
         else:
             logging.warning(f"Order failed to fill: {trade}")
 
         return trade
 
-
-
-
-
     def log_trade(self, trade):
         with self.lock:
             self.trade_log.append(trade)
-            logging.info(f"Trade logged: {trade}")
+            #logging.info(f"Trade logged: {trade}")
+            # Write the trade to the log file
+            with open(self.trade_log_file, 'a') as f:
+                f.write(f"{trade}\n")
 
     def get_trade_log(self):
         with self.lock:

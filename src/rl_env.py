@@ -6,7 +6,7 @@ import logging
 from utils import add_time_features
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 class TradingEnv(gym.Env):
     def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=1000):
@@ -61,7 +61,7 @@ class TradingEnv(gym.Env):
 
         state = self._get_observation(current_data)
 
-        if self.data_handler.pending_order == False:
+        if not self.data_handler.pending_order:
             logger.debug("No pending order. Performing action.")
             action_info = self.rl_trader.perform_action(current_data, action, self.data_handler)
             logger.debug("Trade order placed: %s", action_info)
@@ -69,18 +69,17 @@ class TradingEnv(gym.Env):
             logger.debug("Pending order exists. Skipping perform_action.")
             action_info = None
 
-        # Fill the order to get the filled trade
         filled_trade = self.data_handler.fill_order()
-        if filled_trade:
-            logger.debug("Filled trade: %s", filled_trade)
+        if filled_trade and filled_trade['success']:
             self.rl_trader.update_position(filled_trade)
+            logger.debug("Filled trade: %s", filled_trade)
             reward = self.calculate_reward(current_data, filled_trade)
+            self.rl_trader.trades.append(filled_trade)
             self.done = self._check_done()
         else:
             logger.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_trade)
             reward = 0
 
-        # Log performance metrics
         logger.info("Performance metrics:\nTotal trades: %d\nSuccessful trades: %d\nFailed trades: %d\nTotal Profit: %f",
                     self.performance_metrics["total_trades"], 
                     self.performance_metrics["successful_trades"], 
@@ -89,6 +88,7 @@ class TradingEnv(gym.Env):
 
         logger.debug("New state: %s, Reward: %f, Done: %s", state, reward, self.done)
         return state, reward, self.done, False, {}
+
 
 
     def _get_observation(self, current_data=None):
@@ -130,39 +130,35 @@ class TradingEnv(gym.Env):
         logger.debug("Observation state: %s", state)
         return state
 
-    def calculate_reward(self, current_data, action_info):
+    def calculate_reward(self, current_data, fill_info):
         reward = 0
         current_price = current_data['Close']
-        logger.debug("Current price: %f", current_price)
+        if fill_info:
+            logger.info("Calculate reward: fill info: %s", fill_info)
         
-        if action_info:
-            logger.debug("Action info: %s", action_info)
+        if fill_info['action'] == 'close_long' or fill_info['action'] == 'close_short':
+            if fill_info['action'] == 'close_long':
+                reward = (self.rl_trader.exit_price - self.rl_trader.entry_price) * 10000  # pips for long position
+            elif fill_info['action'] == 'close_short':
+                reward = (self.rl_trader.entry_price - self.rl_trader.exit_price) * 10000  # pips for short position
+
+            self.performance_metrics["total_trades"] += 1
+            if reward > 0:
+                self.performance_metrics["successful_trades"] += 1
+            else:
+                self.performance_metrics["failed_trades"] += 1
+            self.performance_metrics["total_profit"] += reward
+        elif fill_info['action'] == 'buy':
+            reward = (current_price - self.rl_trader.entry_price) * 10000
+        elif fill_info['action'] == 'sell':
+            reward = (self.rl_trader.entry_price - current_price - current_price) * 10000
         
-        if action_info and 'action' in action_info:
-            if action_info['success']:
-                if action_info['action'] in ['close_long', 'close_short']:
-                    if self.rl_trader.entry_price is None:
-                        logger.error("Entry price is None when trying to close a position. Action: %s", action_info['action'])
-                        return 0  # No reward if entry price is not set
-
-                    logger.debug("Entry price: %f", self.rl_trader.entry_price)
-                    if action_info['action'] == 'close_long':
-                        reward = (current_price - self.rl_trader.entry_price) * 10000  # pips for long position
-                    elif action_info['action'] == 'close_short':
-                        reward = (self.rl_trader.entry_price - current_price) * 10000  # pips for short position
-
-                    self.performance_metrics["total_trades"] += 1
-                    if reward > 0:
-                        self.performance_metrics["successful_trades"] += 1
-                    else:
-                        self.performance_metrics["failed_trades"] += 1
-                    self.performance_metrics["total_profit"] += reward
-
         logger.debug("Reward calculated: %f", reward)
         return reward
 
+
     def _check_done(self):
-        if self.performance_metrics["total_profit"] < -3000:
+        if self.performance_metrics["total_profit"] < -1000:
             return True
         if self.data_handler.index >= self.max_steps:
             return True

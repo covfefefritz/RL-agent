@@ -4,6 +4,7 @@ class LearningTrader:
     def __init__(self):
         self.current_position = 0  # 1 for long, -1 for short, 0 for flat
         self.entry_price = None
+        self.exit_price = None
         self.trades = []
 
     def perform_action(self, current_data, action, data_handler):
@@ -35,7 +36,6 @@ class LearningTrader:
                 if trade['success']:
                     logging.info("Close long order placed: %s", trade)
 
-        logging.info("Return from perform action function")
         return trade
 
 
@@ -48,7 +48,7 @@ class LearningTrader:
                 self.entry_price = filled_trade['price']
                 self.current_position = -1
             elif filled_trade['action'] == 'close_long' or filled_trade['action'] == 'close_short':
-                self.entry_price = None
+                self.exit_price = filled_trade['price']
                 self.current_position = 0
             self.trades.append(filled_trade)  # Add trade only if successful
             logging.info("Trade filled and position updated: %s", filled_trade)
