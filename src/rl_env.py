@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 class TradingEnv(gym.Env):
-    def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=1000):
+    def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=5000):
         super(TradingEnv, self).__init__()
         self.data_handler = data_handler
         self.lstm_predictor = lstm_predictor
@@ -19,7 +19,7 @@ class TradingEnv(gym.Env):
         self.action_space = spaces.Discrete(3)  # Buy, Hold, Sell
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
         self.done = False
-        #self.pending_order = False
+        self.truncated = False
         self.performance_metrics = {
             "total_trades": 0,
             "successful_trades": 0,
@@ -30,13 +30,15 @@ class TradingEnv(gym.Env):
 
     def reset(self, **kwargs):
         logger.info("Environment reset")
-        self.data_handler.index = 0
-        historical_data = self.data_handler.get_historical_data(self.seq_length)
+        self.data_handler.reset()
+        #self.data_handler.index = 0
+        historical_data = [self.data_handler.get_current_data() for _ in range(self.seq_length)]
 
         if len(historical_data) < self.seq_length:
             logger.error("Not enough historical data to initialize the environment.")
             self.done = True
-            return np.zeros(self.observation_space.shape), {}
+            self.truncated = False
+            return np.zeros(self.observation_space.shape), {}  # Ensure two values are returned
 
         self.lstm_predictor.reset()
         for data in historical_data:
@@ -45,8 +47,11 @@ class TradingEnv(gym.Env):
         observation = self._get_observation(historical_data[-1])
         logger.debug("Initial observation: %s", observation)
         self.done = False
+        self.truncated = False
         self.data_handler.pending_order = False
-        return observation, {}
+        return observation, {}  # Ensure two values are returne
+
+
 
     def step(self, action):
         logger.info("Step action received: %d", action)
@@ -54,7 +59,8 @@ class TradingEnv(gym.Env):
         if not current_data:
             logger.warning("No current data available")
             self.done = True
-            return np.zeros(self.observation_space.shape), 0, self.done, False, {}
+            self.truncated = False
+            return np.zeros(self.observation_space.shape), 0, self.done, self.truncated, {}
 
         self.lstm_predictor.add_data(current_data)
         self.lstm_predictor.update_data_and_predict()
@@ -76,9 +82,17 @@ class TradingEnv(gym.Env):
             reward = self.calculate_reward(current_data, filled_trade)
             self.rl_trader.trades.append(filled_trade)
             self.done = self._check_done()
+            self.truncated = False  # Assuming truncation is not used in this context
         else:
             logger.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_trade)
             reward = 0
+
+        info = {
+            "total_trades": self.performance_metrics["total_trades"],
+            "successful_trades": self.performance_metrics["successful_trades"],
+            "failed_trades": self.performance_metrics["failed_trades"],
+            "total_profit": self.performance_metrics["total_profit"]
+        }
 
         logger.info("Performance metrics:\nTotal trades: %d\nSuccessful trades: %d\nFailed trades: %d\nTotal Profit: %f",
                     self.performance_metrics["total_trades"], 
@@ -86,10 +100,8 @@ class TradingEnv(gym.Env):
                     self.performance_metrics["failed_trades"],
                     self.performance_metrics["total_profit"])
 
-        logger.debug("New state: %s, Reward: %f, Done: %s", state, reward, self.done)
-        return state, reward, self.done, False, {}
-
-
+        logger.debug("New state: %s, Reward: %f, Done: %s, Truncated: %s", state, reward, self.done, self.truncated)
+        return state, reward, self.done, self.truncated, info
 
     def _get_observation(self, current_data=None):
         if current_data is None:
@@ -151,11 +163,10 @@ class TradingEnv(gym.Env):
         elif fill_info['action'] == 'buy':
             reward = (current_price - self.rl_trader.entry_price) * 10000
         elif fill_info['action'] == 'sell':
-            reward = (self.rl_trader.entry_price - current_price - current_price) * 10000
+            reward = (self.rl_trader.entry_price - current_price) * 10000
         
         logger.debug("Reward calculated: %f", reward)
         return reward
-
 
     def _check_done(self):
         if self.performance_metrics["total_profit"] < -1000:

@@ -1,11 +1,12 @@
 from flask import Flask, jsonify, request
 import pandas as pd
+import random
 import threading
 
 app = Flask(__name__)
 
 # Load the dummy data
-data = pd.read_csv('historic_data/EURUSD_Candlestick_1_Hour_BID_01.04.2022-13.04.2024.csv')
+data = pd.read_csv('historic_data/EURUSD-train.csv')
 index = 0
 lock = threading.Lock()
 
@@ -24,9 +25,12 @@ def get_data():
 @app.route('/reset_data', methods=['POST'])
 def reset_data():
     global index
+    start = 1000
+    end = len(data) - 2000
     with lock:
-        index = 0
-    return jsonify({'message': 'Data feed reset'}), 200
+        index = random.randint(start, end)
+    return jsonify({'message': 'Data feed reset',
+                    'index': index}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -8,7 +8,7 @@ class LearningTrader:
         self.trades = []
 
     def perform_action(self, current_data, action, data_handler):
-        spread = 0.0002
+        spread = 0.0003
         current_price = current_data['Close']
         trade = {'action': 'hold', 'price': None, 'timestamp': current_data['Gmt time'], 'size': 0, 'success': False}
 

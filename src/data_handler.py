@@ -143,6 +143,21 @@ class DataHandler:
 
     def calculate_performance(self):
         return 0
+    
+    def reset(self):
+        logging.info("Resetting DataHandler")
+        with self.lock:
+            response = requests.post(f"{self.api_url}/reset_data")
+            if response.status_code == 200:
+                #response_data = response.json()
+                self.index = 0 #response_data['index'] 
+                self.historical_data.clear()
+                self.trade_log.clear()
+                self.pending_trade = None
+                self.pending_order = False
+                logging.info("DataHandler reset successfully")
+            else:
+                logging.error("Failed to reset DataHandler")
 
 class DataFetcher:
     def __init__(self, api_url):
@@ -152,7 +167,7 @@ class DataFetcher:
         max_retries = 5
         for i in range(max_retries):
             try:
-                response = requests.get(self.api_url)
+                response = requests.get(f"{self.api_url}/get_data")
                 if response.status_code == 404:
                     logging.info("No more data available from API. Exiting.")
                     return None
