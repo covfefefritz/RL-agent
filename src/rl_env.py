@@ -4,18 +4,23 @@ import numpy as np
 import pandas as pd
 import logging
 from utils import add_time_features
+import gc  # Garbage collection module
+import tensorflow as tf
+from predictor import LSTMPredictor
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 class TradingEnv(gym.Env):
-    def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=5000):
+    def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=5000, lstm_model_path='./lstm_model_v3_simple.h5', lstm_scaler_path='./scaler_v3_simple.pkl'):
         super(TradingEnv, self).__init__()
         self.data_handler = data_handler
         self.lstm_predictor = lstm_predictor
         self.rl_trader = rl_trader
         self.seq_length = seq_length
         self.max_steps = max_steps
+        self.lstm_model_path = lstm_model_path  # Needed to re-initialize after deletion and GC
+        self.lstm_scaler_path = lstm_scaler_path
         self.action_space = spaces.Discrete(3)  # Buy, Hold, Sell
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
         self.done = False
@@ -31,7 +36,6 @@ class TradingEnv(gym.Env):
     def reset(self, **kwargs):
         logger.info("Environment reset")
         self.data_handler.reset()
-        #self.data_handler.index = 0
         historical_data = [self.data_handler.get_current_data() for _ in range(self.seq_length)]
 
         if len(historical_data) < self.seq_length:
@@ -40,18 +44,40 @@ class TradingEnv(gym.Env):
             self.truncated = False
             return np.zeros(self.observation_space.shape), {}  # Ensure two values are returned
 
-        self.lstm_predictor.reset()
+        # Clear and reset the LSTM model
+        self._reset_lstm_predictor()
+
+        # Add historical data to the LSTM predictor
         for data in historical_data:
             self.lstm_predictor.add_data(data)
         self.lstm_predictor.update_data_and_predict()
+
         observation = self._get_observation(historical_data[-1])
         logger.debug("Initial observation: %s", observation)
+
+        # Reset performance metrics
+        self.performance_metrics = {
+            "total_trades": 0,
+            "successful_trades": 0,
+            "failed_trades": 0,
+            "total_profit": 0,
+        }
+
         self.done = False
         self.truncated = False
         self.data_handler.pending_order = False
-        return observation, {}  # Ensure two values are returne
+        return observation, {}  # Ensure two values are returned
 
-
+    def _reset_lstm_predictor(self):
+        if hasattr(self, 'lstm_predictor') and self.lstm_predictor is not None:
+            self.lstm_predictor.reset()
+            del self.lstm_predictor
+            gc.collect()
+            tf.keras.backend.clear_session()
+            gc.collect()
+        
+        # Re-initialize the LSTM predictor
+        self.lstm_predictor = LSTMPredictor(model_path=self.lstm_model_path, scaler_path=self.lstm_scaler_path)
 
     def step(self, action):
         logger.info("Step action received: %d", action)
@@ -165,7 +191,7 @@ class TradingEnv(gym.Env):
         elif fill_info['action'] == 'sell':
             reward = (self.rl_trader.entry_price - current_price) * 10000
         
-        logger.debug("Reward calculated: %f", reward)
+        logger.info("Reward calculated: %f", reward)
         return reward
 
     def _check_done(self):

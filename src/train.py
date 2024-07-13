@@ -1,8 +1,8 @@
-from stable_baselines3 import PPO
-from keras.models import load_model
-import numpy as np
-import time
 import logging
+import time
+import numpy as np
+from stable_baselines3 import PPO
+from tensorflow.keras.models import load_model
 
 from rl_env import TradingEnv  # Ensure correct import
 from predictor import LSTMPredictor
@@ -25,7 +25,7 @@ def train_model(env, model, num_episodes, steps_per_episode):
             if done or truncated:
                 break
         rewards.append(total_reward)
-        print(f"Episode {episode + 1}/{num_episodes} - Total Reward: {total_reward}")
+        logger.info(f"Episode {episode + 1}/{num_episodes} - Total Reward: {total_reward}")
     return rewards
 
 if __name__ == "__main__":
@@ -33,7 +33,6 @@ if __name__ == "__main__":
     train_data_handler = DataHandler(api_url='http://api:5000')
     rl_trader = LearningTrader()
 
-    model = load_model('lstm_model_v3_simple.h5')
     lstm_predictor = LSTMPredictor(model_path='./lstm_model_v3_simple.h5', scaler_path='./scaler_v3_simple.pkl')
 
     # Training environment

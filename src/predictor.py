@@ -5,14 +5,13 @@ from tensorflow.keras.models import load_model
 import logging
 from utils import add_time_features, create_sequences
 
-
 class LSTMPredictor:
     def __init__(self, model_path, scaler_path):
         self.model = load_model(model_path)
         self.scaler = joblib.load(scaler_path)
         self.seq_length = 60
         self.data = []
-        self.predictions = []  # Initialize as an empty list
+        self.predictions = []
         logging.info("LSTMPredictor initialized with model_path: %s and scaler_path: %s", model_path, scaler_path)
 
     def reset(self):
@@ -55,14 +54,14 @@ class LSTMPredictor:
         last_sequence = X_new[-1]
         recursive_predictions = self.recursive_predict(last_sequence, steps=15)
 
-        self.predictions = list(recursive_predictions)  # Ensure predictions is a list
+        self.predictions = list(recursive_predictions)
 
     def recursive_predict(self, sequence, steps=1):
         sequence = sequence.copy()
         predictions = []
 
         for step in range(steps):
-            prediction = self.model.predict(sequence[np.newaxis, :, :])[0, 0]
+            prediction = self.model.predict(sequence[np.newaxis, :, :], batch_size=1)[0, 0]
             predictions.append(prediction)
             sequence = np.roll(sequence, -1, axis=0)
             sequence[-1, 3] = prediction
