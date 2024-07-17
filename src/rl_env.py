@@ -8,11 +8,9 @@ import gc  # Garbage collection module
 import tensorflow as tf
 from predictor import LSTMPredictor
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 class TradingEnv(gym.Env):
-    def __init__(self, data_handler, lstm_predictor, rl_trader, seq_length=60, max_steps=5000, lstm_model_path='./lstm_model_v3_simple.h5', lstm_scaler_path='./scaler_v3_simple.pkl'):
+    def __init__(self, data_handler, lstm_predictor, rl_trader, max_steps=2500, seq_length=60, lstm_model_path='./lstm_model_v3_simple.h5', lstm_scaler_path='./scaler_v3_simple.pkl', instrument='EURUSD-Mini'):
         super(TradingEnv, self).__init__()
         self.data_handler = data_handler
         self.lstm_predictor = lstm_predictor
@@ -21,7 +19,11 @@ class TradingEnv(gym.Env):
         self.max_steps = max_steps
         self.lstm_model_path = lstm_model_path  # Needed to re-initialize after deletion and GC
         self.lstm_scaler_path = lstm_scaler_path
-        self.action_space = spaces.Discrete(3)  # Buy, Hold, Sell
+        self.instrument = instrument
+
+        # Flatten the hierarchical action space into a single Discrete action space
+        self.action_space = spaces.Discrete(9)  # 3 action types (Buy, Sell, Hold) * 3 magnitudes (Small, Medium, Large)
+
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
         self.done = False
         self.truncated = False
@@ -31,15 +33,15 @@ class TradingEnv(gym.Env):
             "failed_trades": 0,
             "total_profit": 0,
         }
-        logger.info("TradingEnv initialized with seq_length: %d and max_steps: %d", self.seq_length, self.max_steps)
+        logging.info("TradingEnv initialized with seq_length: %d and max_steps: %d", self.seq_length, self.max_steps)
 
     def reset(self, **kwargs):
-        logger.info("Environment reset")
+        logging.info("Environment reset")
         self.data_handler.reset()
         historical_data = [self.data_handler.get_current_data() for _ in range(self.seq_length)]
 
         if len(historical_data) < self.seq_length:
-            logger.error("Not enough historical data to initialize the environment.")
+            logging.error("Not enough historical data to initialize the environment.")
             self.done = True
             self.truncated = False
             return np.zeros(self.observation_space.shape), {}  # Ensure two values are returned
@@ -47,13 +49,16 @@ class TradingEnv(gym.Env):
         # Clear and reset the LSTM model
         self._reset_lstm_predictor()
 
+        # Reset RL trader's state
+        self.rl_trader.reset()
+
         # Add historical data to the LSTM predictor
         for data in historical_data:
             self.lstm_predictor.add_data(data)
         self.lstm_predictor.update_data_and_predict()
 
         observation = self._get_observation(historical_data[-1])
-        logger.debug("Initial observation: %s", observation)
+        logging.debug("Initial observation: %s", observation)
 
         # Reset performance metrics
         self.performance_metrics = {
@@ -80,10 +85,17 @@ class TradingEnv(gym.Env):
         self.lstm_predictor = LSTMPredictor(model_path=self.lstm_model_path, scaler_path=self.lstm_scaler_path)
 
     def step(self, action):
-        logger.info("Step action received: %d", action)
+        logging.info("Step action received: %d", action)
+
+        # Decode the combined action into action_type and action_magnitude
+        action_type = action // 3
+        action_magnitude = action % 3
+        magnitudes = {0: 1, 1: 2, 2: 3}
+        scaled_action = magnitudes[action_magnitude] if action_type == 0 else -magnitudes[action_magnitude]
+
         current_data = self.data_handler.get_current_data()
         if not current_data:
-            logger.warning("No current data available")
+            logging.warning("No current data available")
             self.done = True
             self.truncated = False
             return np.zeros(self.observation_space.shape), 0, self.done, self.truncated, {}
@@ -94,23 +106,21 @@ class TradingEnv(gym.Env):
         state = self._get_observation(current_data)
 
         if not self.data_handler.pending_order:
-            logger.debug("No pending order. Performing action.")
-            action_info = self.rl_trader.perform_action(current_data, action, self.data_handler)
-            logger.debug("Trade order placed: %s", action_info)
+            action_info = self.rl_trader.perform_action(current_data, scaled_action, self.data_handler, self.instrument)
+            logging.debug("Trade order placed: %s", action_info)
         else:
-            logger.debug("Pending order exists. Skipping perform_action.")
+            logging.debug("Pending order exists. Skipping perform_action.")
             action_info = None
 
         filled_trade = self.data_handler.fill_order()
         if filled_trade and filled_trade['success']:
             self.rl_trader.update_position(filled_trade)
-            logger.debug("Filled trade: %s", filled_trade)
+            logging.debug("Filled trade: %s", filled_trade)
             reward = self.calculate_reward(current_data, filled_trade)
             self.rl_trader.trades.append(filled_trade)
-            self.done = self._check_done()
             self.truncated = False  # Assuming truncation is not used in this context
         else:
-            logger.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_trade)
+            logging.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_trade)
             reward = 0
 
         info = {
@@ -120,23 +130,24 @@ class TradingEnv(gym.Env):
             "total_profit": self.performance_metrics["total_profit"]
         }
 
-        logger.info("Performance metrics:\nTotal trades: %d\nSuccessful trades: %d\nFailed trades: %d\nTotal Profit: %f",
+        logging.info("Performance metrics:\nTotal trades: %d\nSuccessful trades: %d\nFailed trades: %d\nTotal Profit: %f",
                     self.performance_metrics["total_trades"], 
                     self.performance_metrics["successful_trades"], 
                     self.performance_metrics["failed_trades"],
                     self.performance_metrics["total_profit"])
 
-        logger.debug("New state: %s, Reward: %f, Done: %s, Truncated: %s", state, reward, self.done, self.truncated)
+        logging.debug("New state: %s, Reward: %f, Done: %s, Truncated: %s", state, reward, self.done, self.truncated)
+        self.done = self._check_done()
         return state, reward, self.done, self.truncated, info
 
     def _get_observation(self, current_data=None):
         if current_data is None:
-            logger.warning("Current data is None, returning default state")
+            logging.warning("Current data is None, returning default state")
             return np.zeros(self.observation_space.shape)
 
         historical_data = self.data_handler.get_historical_data(self.seq_length)
         if len(historical_data) < self.seq_length:
-            logger.error(f"Not enough historical data. Needed: {self.seq_length}, available: {len(historical_data)}")
+            logging.error(f"Not enough historical data. Needed: {self.seq_length}, available: {len(historical_data)}")
             return np.zeros(self.observation_space.shape)
 
         historical_df = pd.DataFrame(historical_data)
@@ -154,7 +165,7 @@ class TradingEnv(gym.Env):
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 'day_of_week_cos']
 
         if not all(col in historical_df.columns for col in required_columns):
-            logger.error(f"One or more required columns are missing in the historical data: {required_columns}")
+            logging.error(f"One or more required columns are missing in the historical data: {required_columns}")
             return np.zeros(self.observation_space.shape)
 
         features = current_data
@@ -165,20 +176,43 @@ class TradingEnv(gym.Env):
             prediction
         ])
 
-        logger.debug("Observation state: %s", state)
+        logging.debug("Observation state: %s", state)
         return state
 
     def calculate_reward(self, current_data, fill_info):
         reward = 0
         current_price = current_data['Close']
         if fill_info:
-            logger.info("Calculate reward: fill info: %s", fill_info)
-        
-        if fill_info['action'] == 'close_long' or fill_info['action'] == 'close_short':
-            if fill_info['action'] == 'close_long':
-                reward = (self.rl_trader.exit_price - self.rl_trader.entry_price) * 10000  # pips for long position
-            elif fill_info['action'] == 'close_short':
-                reward = (self.rl_trader.entry_price - self.rl_trader.exit_price) * 10000  # pips for short position
+            logging.info("Calculate reward: fill info: %s", fill_info)
+
+            action = fill_info['action']
+            size = fill_info['size']
+            fill_price = fill_info['price']
+            fee = fill_info.get('fee', 0)
+
+            # Ensure no entry has None for price
+            valid_entries = [entry for entry in self.rl_trader.entry_prices if entry['price'] is not None]
+            if not valid_entries:
+                avg_entry_price = current_price  # Default to current price if no valid entries
+            else:
+                entry_prices_sum = sum([entry['price'] * entry['size'] for entry in valid_entries])
+                entry_sizes_sum = sum([entry['size'] for entry in valid_entries])
+                avg_entry_price = entry_prices_sum / entry_sizes_sum if entry_sizes_sum > 0 else current_price
+
+            # Debug prints
+            logging.debug("Current Price: %f", current_price)
+            logging.debug("Average Entry Price: %f", avg_entry_price)
+            logging.debug("Action: %s, Size: %d, Fill Price: %f, Fee: %f", action, size, fill_price, fee)
+
+            # Calculate reward based on action type
+            if action in ['close_long', 'reduce_long']:
+                reward = (fill_price - avg_entry_price) * size * 1000 - fee  # Reduced factor to 1000
+            elif action in ['close_short', 'reduce_short']:
+                reward = (avg_entry_price - fill_price) * size * 1000 - fee  # Reduced factor to 1000
+            elif action == 'buy':
+                reward = (current_price - avg_entry_price) * size * 1000 - fee  # Reduced factor to 1000
+            elif action == 'sell':
+                reward = (avg_entry_price - current_price) * size * 1000 - fee  # Reduced factor to 1000
 
             self.performance_metrics["total_trades"] += 1
             if reward > 0:
@@ -186,17 +220,15 @@ class TradingEnv(gym.Env):
             else:
                 self.performance_metrics["failed_trades"] += 1
             self.performance_metrics["total_profit"] += reward
-        elif fill_info['action'] == 'buy':
-            reward = (current_price - self.rl_trader.entry_price) * 10000
-        elif fill_info['action'] == 'sell':
-            reward = (self.rl_trader.entry_price - current_price) * 10000
-        
-        logger.info("Reward calculated: %f", reward)
+
+        logging.info("Reward calculated: %f", reward)
         return reward
+
 
     def _check_done(self):
         if self.performance_metrics["total_profit"] < -1000:
             return True
+        logging.debug("Environment step number: %d", self.data_handler.index)
         if self.data_handler.index >= self.max_steps:
             return True
         return False

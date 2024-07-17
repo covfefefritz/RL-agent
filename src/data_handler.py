@@ -1,12 +1,13 @@
 import pandas as pd
 import logging
+import os
 from threading import Lock
 import requests
 import time
 from utils import add_time_features
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.DEBUG)
 
 class DataHandler:
     def __init__(self, api_url):
@@ -18,7 +19,15 @@ class DataHandler:
         self.historical_data = []
         self.pending_trade = None
         self.pending_order = False
-        self.trade_log_file = 'trade_log.txt'
+        self.trade_log_file = 'trade_log.csv'
+        
+        # Map to store spreads and fees for different instruments
+        self.instrument_map = {
+            'EURUSD-Mini': {'spread': 0.0003, 'fee': 0.0003},
+            'GBPUSD-Mini': {'spread': 0.0004, 'fee': 0.0006},
+            'USDJPY-Mini': {'spread': 0.03, 'fee': 0.04},   
+            # Add more instruments as needed
+        }
 
     def get_current_data(self):
         with self.lock:
@@ -37,6 +46,7 @@ class DataHandler:
                 current_data_dict['Gmt time'] = df_new_data.index[0]
                 self.historical_data.append(current_data_dict)
                 logging.info(f"Fetched current data: {current_data_dict}")
+                self.index += 1
                 return current_data_dict
             else:
                 logging.warning("No new data fetched")
@@ -69,29 +79,37 @@ class DataHandler:
 
             return historical_df.to_dict(orient='records')
 
-    def place_order(self, trade, action_type, spread):
-        logging.debug(f"DataHandler: Placing order")
-        if self.pending_order == True:
+    def place_order(self, trade, action_type, instrument, size):
+        logging.debug(f"DataHandler: Placing order for {instrument}")
+        if self.pending_order:
             logging.warning("There is already a pending order")
             return False
 
         self.pending_order = True 
 
+        # Lookup spread and fee for the instrument
+        if instrument not in self.instrument_map:
+            logging.error(f"Instrument {instrument} not found in instrument map")
+            self.pending_order = False
+            return False
+        
+        spread = self.instrument_map[instrument]['spread']
+        fee = self.instrument_map[instrument]['fee']
+
         trade['price'] = None  # Price to be set when order is filled
-        self.pending_trade = (trade, action_type, spread)
-        logging.info(f"Order placed: {trade}, Action: {action_type}, Spread: {spread}")
+        self.pending_trade = (trade, action_type, instrument, spread, fee, size)
+        logging.info(f"Order placed: {trade}, Action: {action_type}, Instrument: {instrument}, Spread: {spread}, Fee: {fee}, Size: {size}")
         logging.debug(f"Pending order set in DataHandler: {self.pending_trade}, {self.pending_order}")
         return True
 
-    # In DataHandler
     def fill_order(self):
         logging.debug("fill_order: Attempting to fill order")
-        if self.pending_order == False:
+        if not self.pending_order:
             logging.info("fill_order: No pending order to fill")
             return None
 
-        trade, action_type, spread = self.pending_trade
-        logging.debug(f"Pending order: {trade}, Action type: {action_type}, Spread: {spread}")
+        trade, action_type, instrument, spread, fee, size = self.pending_trade
+        logging.debug(f"Pending order: {trade}, Action type: {action_type}, Instrument: {instrument}, Spread: {spread}, Fee: {fee}, Size: {size}")
         current_data = self.get_current_data()  # Fetch the most recent data point
 
         if not current_data:
@@ -102,40 +120,46 @@ class DataHandler:
 
         if action_type == 'buy':
             trade['price'] = current_data['Open'] + spread
-            success = True
         elif action_type == 'sell':
             trade['price'] = current_data['Open'] - spread
-            success = True
         elif action_type == 'close_long':
             trade['price'] = current_data['Open'] - spread
-            success = True
         elif action_type == 'close_short':
             trade['price'] = current_data['Open'] + spread
-            success = True
+        elif action_type == 'reduce_long':
+            trade['price'] = current_data['Open'] + spread
+        elif action_type == 'reduce_short':
+            trade['price'] = current_data['Open'] - spread
         else:
-            success = False
+            logging.warning(f"Invalid action type for trade: {action_type}")
+            trade['success'] = False
+            return trade
 
-        trade['success'] = success
-        logging.debug(f"Trade success: {success}, Trade: {trade}")
+        # Ensure that trade has a valid price
+        assert trade['price'] is not None, f"Price should not be None for trade: {trade}"
 
-        if success:
+        trade['success'] = True
+        logging.debug(f"Trade success: {trade['success']}, Trade: {trade}")
+
+        if trade['success']:
             logging.debug("Order filled successfully")
             self.pending_order = False  # Clear pending order only if filled
             self.pending_trade = None  # Clear pending order only if filled
             self.log_trade(trade)  # Log the trade if it was successful
-           # logging.info(f"Order filled: {trade}")
+            logging.info(f"Order filled: {trade}")
         else:
             logging.warning(f"Order failed to fill: {trade}")
 
+        # Return trade with size and fee included
+        trade['fee'] = fee * size
+        trade['size'] = size
         return trade
 
     def log_trade(self, trade):
         with self.lock:
             self.trade_log.append(trade)
-            #logging.info(f"Trade logged: {trade}")
-            # Write the trade to the log file
-            with open(self.trade_log_file, 'a') as f:
-                f.write(f"{trade}\n")
+            trade_df = pd.DataFrame([trade])
+            trade_df.to_csv(self.trade_log_file, mode='a', header=not os.path.exists(self.trade_log_file), index=False)
 
     def get_trade_log(self):
         with self.lock:
@@ -149,8 +173,8 @@ class DataHandler:
         with self.lock:
             response = requests.post(f"{self.api_url}/reset_data")
             if response.status_code == 200:
-                #response_data = response.json()
-                self.index = 0 #response_data['index'] 
+                # response_data = response.json()
+                self.index = 0 # response_data['index'] 
                 self.historical_data.clear()
                 self.trade_log.clear()
                 self.pending_trade = None

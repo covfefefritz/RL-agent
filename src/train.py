@@ -3,6 +3,7 @@ import time
 import numpy as np
 from stable_baselines3 import PPO
 from tensorflow.keras.models import load_model
+import gc
 
 from rl_env import TradingEnv  # Ensure correct import
 from predictor import LSTMPredictor
@@ -11,7 +12,7 @@ from rl_trader import LearningTrader
 
 # Setup logger
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 def train_model(env, model, num_episodes, steps_per_episode):
     rewards = []
@@ -26,6 +27,11 @@ def train_model(env, model, num_episodes, steps_per_episode):
                 break
         rewards.append(total_reward)
         logger.info(f"Episode {episode + 1}/{num_episodes} - Total Reward: {total_reward}")
+
+        # Explicit garbage collection
+        gc.collect()
+        logger.info(f"Garbage collection after episode {episode + 1}")
+
     return rewards
 
 if __name__ == "__main__":
@@ -35,21 +41,22 @@ if __name__ == "__main__":
 
     lstm_predictor = LSTMPredictor(model_path='./lstm_model_v3_simple.h5', scaler_path='./scaler_v3_simple.pkl')
 
+    # Define number of episodes and steps per episode
+    num_episodes = 30
+    steps_per_episode = 2000  # Adjusted to cover more data points per episode
+
     # Training environment
-    train_env = TradingEnv(train_data_handler, lstm_predictor, rl_trader)
+    train_env = TradingEnv(train_data_handler, lstm_predictor, rl_trader, steps_per_episode)
 
     # Initialize PPO model
     model = PPO('MlpPolicy', train_env, verbose=1)
 
-    # Define number of episodes and steps per episode
-    num_episodes = 35
-    steps_per_episode = 2000  # Adjusted to cover more data points per episode
 
     # Train the model
     train_rewards = train_model(train_env, model, num_episodes, steps_per_episode)
 
     # Save the trained model
-    model.save("ppo_trading_model-2024-07-10")
+    model.save("ppo_trading_model-2024-07-15")
 
     # Continuous trading loop
     while True:

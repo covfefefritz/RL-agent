@@ -25,8 +25,8 @@ def get_data():
 @app.route('/reset_data', methods=['POST'])
 def reset_data():
     global index
-    start = 1000
-    end = len(data) - 2000
+    start = 1
+    end = len(data) - 2501
     with lock:
         index = random.randint(start, end)
     return jsonify({'message': 'Data feed reset',
