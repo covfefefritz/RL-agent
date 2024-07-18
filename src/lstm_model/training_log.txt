@@ -1,0 +1,12 @@
+
+#### Tables
+
+Training
+
+```markdown
+| Date       | Input model             | Input data                     | Output data                                |
+| --------   | --------                | --------                       | --------                                   |
+| 2024-07-17 | None                    | 17 feature 1h EURUSD 10yr full | lstm_model-v3-07-17.h5, scaler-v3-07-17.pkl |
+| 2024-07-17 | lstm_model-v3-07-17.h5  | 17 feature 5m GBPUSD 2yr       | lstm_model-v3-07-17-v1.h5 |
+| 2024-07-17 | lstm_model-v3-07-17-v1.h5 | 17 feature 1h USDJPY ->20180829 | lstm_model-v3-07-17-v2.h5 |
+| 2024-07-18 | lstm_model-v3-07-17-v2.h5 | 17 feature 5m USDJPY ->20221031 | lstm_model-07-17-v1_2.h5 |
