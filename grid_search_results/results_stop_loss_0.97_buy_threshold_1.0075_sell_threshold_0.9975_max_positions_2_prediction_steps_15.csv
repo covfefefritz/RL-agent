@@ -1,6 +1,0 @@
-action,price,timestamp,size,entry_price,exit_price,weighted_performance,net_position,cumulative_profit_loss,max_drawdown,number_of_trades
-pred. entry buy,1.037627484,23.11.2022 18:00:00.000,1,,,,0,0.0,0,1
-pred. entry buy,1.0552710120000002,24.02.2023 19:00:00.000,1,,,,1,0.0,0,2
-opposite move sell,1.07219,28.05.2023 21:00:00.000,2,1.046449248,1.07219,0.049196369626518036,2,0.049196369626518036,0,2
-pred. entry sell,1.071975562,28.05.2023 21:00:00.000,1,,,,0,0.049196369626518036,0,3
-pred. entry sell,1.080653826,28.08.2023 02:00:00.000,1,,,,-1,0.049196369626518036,0,4

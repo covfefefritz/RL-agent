@@ -1,4 +1,0 @@
-action,price,timestamp,size,entry_price,exit_price,weighted_performance,net_position,cumulative_profit_loss,max_drawdown,number_of_trades
-pred. entry sell,1.063977162,14.12.2022 08:00:00.000,1,,,,0,0.0,0,1
-stop loss buy,1.10193,28.04.2023 19:00:00.000,1,1.063977162,1.10193,0.035670726172974045,-1,0.035670726172974045,0,1
-pred. entry sell,1.084783,06.07.2023 01:00:00.000,1,,,,0,0.035670726172974045,0,2

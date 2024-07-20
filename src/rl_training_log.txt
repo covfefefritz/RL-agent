@@ -1,0 +1,13 @@
+
+#### Tables
+
+Training RL model(s) 
+
+```markdown
+| Date       | Input model                      | Input data                                                    | Output data                       |
+| --------   | --------                         | --------                                                      | --------                          |
+| 2024-07-18 | lstm_model-07-17-v1_2.h5         | processed_GBPUSD_Candlestick_1_Hour_BID_10.07.2012-13.07.2024 | ppo_trading_model-2024-07-15.zip  |
+|            | scaler-v3-07-17.pkl              |                                                               |                                   |
+|            | None                             |                                                               |                                   |
+|------------|----------------------------------|---------------------------------------------------------------|-----------------------------------|
+| 2024-07-19 | ppo_trading_model-2024-07-15.zip | processed_EURUSD_Candlestick_5_M_BID_13.07.2021-13.07.2024    | ppo_forex_model-01.zip            |

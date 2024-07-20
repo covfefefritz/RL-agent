@@ -2,7 +2,6 @@ import logging
 import time
 import numpy as np
 from stable_baselines3 import PPO
-from tensorflow.keras.models import load_model
 import gc
 
 from rl_env import TradingEnv  # Ensure correct import
@@ -35,11 +34,11 @@ def train_model(env, model, num_episodes, steps_per_episode):
     return rewards
 
 if __name__ == "__main__":
-    # Initialize data handler for training
-    train_data_handler = DataHandler(api_url='http://api:5000')
+    # Ensure to provide the correct data_file for training
+    train_data_handler = DataHandler(data_file='historic_data/processed_GBPUSD_Candlestick_1_Hour_BID_10.07.2012-13.07.2024.csv')
     rl_trader = LearningTrader()
 
-    lstm_predictor = LSTMPredictor(model_path='./lstm_model_v3_simple.h5', scaler_path='./scaler_v3_simple.pkl')
+    lstm_predictor = LSTMPredictor(model_path='./lstm_model-07-17-v1_2.h5', scaler_path='./scaler-v3-07-17.pkl')
 
     # Define number of episodes and steps per episode
     num_episodes = 30
@@ -50,7 +49,6 @@ if __name__ == "__main__":
 
     # Initialize PPO model
     model = PPO('MlpPolicy', train_env, verbose=1)
-
 
     # Train the model
     train_rewards = train_model(train_env, model, num_episodes, steps_per_episode)

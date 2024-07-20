@@ -3,14 +3,12 @@ from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import logging
-from utils import add_time_features
 import gc  # Garbage collection module
 import tensorflow as tf
 from predictor import LSTMPredictor
 
-
 class TradingEnv(gym.Env):
-    def __init__(self, data_handler, lstm_predictor, rl_trader, max_steps=2500, seq_length=60, lstm_model_path='./lstm_model_v3_simple.h5', lstm_scaler_path='./scaler_v3_simple.pkl', instrument='EURUSD-Mini'):
+    def __init__(self, data_handler, lstm_predictor, rl_trader, max_steps=2500, seq_length=60, lstm_model_path='./lstm_model-07-17-v1_2.h5', lstm_scaler_path='./scaler-v3-07-17.pkl', instrument='GBPUSD-Mini'):
         super(TradingEnv, self).__init__()
         self.data_handler = data_handler
         self.lstm_predictor = lstm_predictor
@@ -24,7 +22,9 @@ class TradingEnv(gym.Env):
         # Flatten the hierarchical action space into a single Discrete action space
         self.action_space = spaces.Discrete(9)  # 3 action types (Buy, Sell, Hold) * 3 magnitudes (Small, Medium, Large)
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
+        # Update observation space to include new features and LSTM prediction
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(18,), dtype=np.float32)
+        self.episode_step = 0
         self.done = False
         self.truncated = False
         self.performance_metrics = {
@@ -37,7 +37,8 @@ class TradingEnv(gym.Env):
 
     def reset(self, **kwargs):
         logging.info("Environment reset")
-        self.data_handler.reset()
+        self.episode_step = 0
+        self.data_handler.reset(self.max_steps)
         historical_data = [self.data_handler.get_current_data() for _ in range(self.seq_length)]
 
         if len(historical_data) < self.seq_length:
@@ -120,9 +121,10 @@ class TradingEnv(gym.Env):
             self.rl_trader.trades.append(filled_trade)
             self.truncated = False  # Assuming truncation is not used in this context
         else:
-            logging.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_trade)
+            logging.debug("No trade was filled. DataHandler pending_order: %s", self.data_handler.pending_order)
             reward = 0
 
+        self.episode_step += 1
         info = {
             "total_trades": self.performance_metrics["total_trades"],
             "successful_trades": self.performance_metrics["successful_trades"],
@@ -161,8 +163,7 @@ class TradingEnv(gym.Env):
         else:
             logging.warning("Gmt time missing in historical data, using default index")
 
-        historical_df = add_time_features(historical_df)
-        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 'day_of_week_cos']
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 'day_of_week_cos', '10SMA', '50SMA', '14RSI', 'MACD', 'Signal_Line', '10DMA', '50DMA', '14DMA_RSI']
 
         if not all(col in historical_df.columns for col in required_columns):
             logging.error(f"One or more required columns are missing in the historical data: {required_columns}")
@@ -173,7 +174,8 @@ class TradingEnv(gym.Env):
         state = np.array([
             features['Open'], features['High'], features['Low'], features['Close'], features['Volume'],
             features['hour_sin'], features['hour_cos'], features['day_of_week_sin'], features['day_of_week_cos'],
-            prediction
+            features['10SMA'], features['50SMA'], features['14RSI'], features['MACD'], features['Signal_Line'],
+            features['10DMA'], features['50DMA'], features['14DMA_RSI'], prediction
         ])
 
         logging.debug("Observation state: %s", state)
@@ -224,11 +226,10 @@ class TradingEnv(gym.Env):
         logging.info("Reward calculated: %f", reward)
         return reward
 
-
     def _check_done(self):
         if self.performance_metrics["total_profit"] < -1000:
             return True
-        logging.debug("Environment step number: %d", self.data_handler.index)
-        if self.data_handler.index >= self.max_steps:
+        logging.debug("Environment step number: %d", self.episode_step)
+        if self.episode_step >= self.max_steps:
             return True
         return False

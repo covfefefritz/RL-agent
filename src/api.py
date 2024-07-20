@@ -6,7 +6,7 @@ import threading
 app = Flask(__name__)
 
 # Load the dummy data
-data = pd.read_csv('historic_data/EURUSD-train.csv')
+data = pd.read_csv('historic_data/processed_EURUSD_Candlestick_1_Hour_BID_01.04.2022-13.04.2024.csv')
 index = 0
 lock = threading.Lock()
 

@@ -1,2 +1,6 @@
-/grid_search_results
-/src/__pycache__
+grid_search_results/
+src/__pycache__
+src/historic_data/
+.github/
+.vscode/
+src/ig-api.py

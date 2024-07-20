@@ -3,7 +3,7 @@ import numpy as np
 import joblib
 from tensorflow.keras.models import load_model
 import logging
-from utils import add_time_features, create_sequences
+from utils import create_sequences
 
 class LSTMPredictor:
     def __init__(self, model_path, scaler_path):
@@ -34,8 +34,9 @@ class LSTMPredictor:
             return None
         df.index = df['Gmt time']  # Set 'Gmt time' as the index
 
-        df = add_time_features(df)
-        features = df[['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 'day_of_week_cos']]
+        features = df[['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 
+                       'day_of_week_cos', '10SMA', '50SMA', '14RSI', 'MACD', 'Signal_Line', '10DMA', 
+                       '50DMA', '14DMA_RSI']]
         return features
 
     def update_data_and_predict(self):

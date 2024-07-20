@@ -2,54 +2,68 @@ import pandas as pd
 import logging
 import os
 from threading import Lock
+import numpy as np
 import requests
-import time
 from utils import add_time_features
-
-# logger = logging.getLogger(__name__)
-# logging.basicConfig(level=logging.DEBUG)
+import joblib
+import gc
 
 class DataHandler:
-    def __init__(self, api_url):
+    def __init__(self, api_url=None, data_file=None):
         self.api_url = api_url
-        self.data_fetcher = DataFetcher(api_url)
-        self.index = 0
+        self.data_file = data_file
+        self.data_index = 0
         self.lock = Lock()
         self.trade_log = []
         self.historical_data = []
         self.pending_trade = None
         self.pending_order = False
         self.trade_log_file = 'trade_log.csv'
-        
-        # Map to store spreads and fees for different instruments
+
+        self.scaler = joblib.load('scaler-v3-07-17.pkl')
+
         self.instrument_map = {
             'EURUSD-Mini': {'spread': 0.0003, 'fee': 0.0003},
             'GBPUSD-Mini': {'spread': 0.0004, 'fee': 0.0006},
-            'USDJPY-Mini': {'spread': 0.03, 'fee': 0.04},   
-            # Add more instruments as needed
+            'USDJPY-Mini': {'spread': 0.03, 'fee': 0.04},
         }
+
+        self.data = self.load_processed_data() if self.data_file else None
+
+    def load_processed_data(self):
+        if self.data_file:
+            data = pd.read_csv(self.data_file, index_col='Gmt time', parse_dates=['Gmt time'])
+            features = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 
+                        'day_of_week_cos', '10SMA', '50SMA', '14RSI', 'MACD', 'Signal_Line', '10DMA', 
+                        '50DMA', '14DMA_RSI']
+            data = data[features]
+            return data
+        else:
+            logging.error("Data file not provided")
+            return None
+
+    def get_scaled_data(self):
+        if self.data is not None:
+            scaled_data = self.scaler.transform(self.data.values)
+            return scaled_data
+        else:
+            logging.error("No data available to scale")
+            return None
 
     def get_current_data(self):
         with self.lock:
-            new_data = self.data_fetcher.fetch_new_data()
-            if new_data:
-                df_new_data = pd.DataFrame([new_data])
-                try:
-                    df_new_data['Gmt time'] = pd.to_datetime(df_new_data['Gmt time'], format="%d.%m.%Y %H:%M:%S.%f")
-                    df_new_data.set_index('Gmt time', inplace=True)
-                except Exception as e:
-                    logging.error("Error parsing 'Gmt time': %s", e)
+            if self.data is not None:
+                if self.data_index < len(self.data):
+                    current_data = self.data.iloc[self.data_index].to_dict()
+                    current_data['Gmt time'] = self.data.index[self.data_index]
+                    self.historical_data.append(current_data)
+                    self.data_index += 1
+                    return current_data
+                else:
+                    logging.warning("Reached the end of the dataset.")
                     return None
-
-                df_new_data = add_time_features(df_new_data)
-                current_data_dict = df_new_data.iloc[0].to_dict()
-                current_data_dict['Gmt time'] = df_new_data.index[0]
-                self.historical_data.append(current_data_dict)
-                logging.info(f"Fetched current data: {current_data_dict}")
-                self.index += 1
-                return current_data_dict
             else:
-                logging.warning("No new data fetched")
+                logging.error("No data available and API URL not provided")
                 return None
 
     def get_historical_data(self, seq_length):
@@ -70,12 +84,13 @@ class DataHandler:
                 logging.warning("Gmt time missing in historical data, using default index")
 
             historical_df = add_time_features(historical_df)
-            # Ensure the required columns are present
-            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 'day_of_week_cos']
-            for col in required_columns:
-                if col not in historical_df.columns:
-                    logging.error(f"Column '{col}' missing in historical data")
-                    return pd.DataFrame(columns=required_columns)  # Return empty DataFrame with required columns
+            features = ['Open', 'High', 'Low', 'Close', 'Volume', 'hour_sin', 'hour_cos', 'day_of_week_sin', 
+                        'day_of_week_cos', '10SMA', '50SMA', '14RSI', 'MACD', 'Signal_Line', '10DMA', 
+                        '50DMA', '14DMA_RSI']
+
+            if not all(col in historical_df.columns for col in features):
+                logging.error(f"Column '{col}' missing in historical data")
+                return pd.DataFrame(columns=features)  # Return empty DataFrame with required columns
 
             return historical_df.to_dict(orient='records')
 
@@ -85,14 +100,13 @@ class DataHandler:
             logging.warning("There is already a pending order")
             return False
 
-        self.pending_order = True 
+        self.pending_order = True
 
-        # Lookup spread and fee for the instrument
         if instrument not in self.instrument_map:
             logging.error(f"Instrument {instrument} not found in instrument map")
             self.pending_order = False
             return False
-        
+
         spread = self.instrument_map[instrument]['spread']
         fee = self.instrument_map[instrument]['fee']
 
@@ -135,7 +149,6 @@ class DataHandler:
             trade['success'] = False
             return trade
 
-        # Ensure that trade has a valid price
         assert trade['price'] is not None, f"Price should not be None for trade: {trade}"
 
         trade['success'] = True
@@ -150,7 +163,6 @@ class DataHandler:
         else:
             logging.warning(f"Order failed to fill: {trade}")
 
-        # Return trade with size and fee included
         trade['fee'] = fee * size
         trade['size'] = size
         return trade
@@ -167,43 +179,29 @@ class DataHandler:
 
     def calculate_performance(self):
         return 0
-    
-    def reset(self):
+
+    def reset(self, episode_length):
         logging.info("Resetting DataHandler")
-        with self.lock:
-            response = requests.post(f"{self.api_url}/reset_data")
-            if response.status_code == 200:
-                # response_data = response.json()
-                self.index = 0 # response_data['index'] 
-                self.historical_data.clear()
-                self.trade_log.clear()
-                self.pending_trade = None
-                self.pending_order = False
-                logging.info("DataHandler reset successfully")
-            else:
-                logging.error("Failed to reset DataHandler")
-
-class DataFetcher:
-    def __init__(self, api_url):
-        self.api_url = api_url
-
-    def fetch_new_data(self):
-        max_retries = 5
-        for i in range(max_retries):
-            try:
-                response = requests.get(f"{self.api_url}/get_data")
-                if response.status_code == 404:
-                    logging.info("No more data available from API. Exiting.")
-                    return None
-                response.raise_for_status()
-                new_data = response.json()
-                if new_data:
-                    # Assume new_data has the required hourly OHLC format
-                    logging.debug(f"Fetched new data: {new_data}")
-                    time.sleep(0.1)
-                    return new_data
-            except requests.RequestException as e:
-                logging.warning(f"Request error: {e}. Retrying ({i+1}/{max_retries})...")
-                time.sleep(2 ** i)  # Exponential backoff
-        logging.error("Max retries exceeded. Exiting.")
-        return None
+        if self.data is not None:
+            self.data_index = np.random.randint(0, len(self.data) - episode_length)
+            self.historical_data.clear()
+            for i in range(episode_length):
+                current_data = self.data.iloc[self.data_index + i].to_dict()
+                current_data['Gmt time'] = self.data.index[self.data_index + i]
+                self.historical_data.append(current_data)
+            logging.info(f"DataHandler reset to new index: {self.data_index}")
+        elif self.api_url:
+            with self.lock:
+                response = requests.post(f"{self.api_url}/reset_data")
+                if response.status_code == 200:
+                    self.data_index = 0
+                    self.historical_data.clear()
+                    self.trade_log.clear()
+                    self.pending_trade = None
+                    self.pending_order = False
+                    logging.info("DataHandler reset successfully via API")
+                else:
+                    logging.error("Failed to reset DataHandler via API")
+        else:
+            logging.error("No data source provided for reset")
+        gc.collect()

@@ -1,2 +1,0 @@
-action,price,timestamp,size,entry_price,exit_price,weighted_performance,net_position,cumulative_profit_loss,max_drawdown,number_of_trades
-pred. entry sell,1.085072942,22.02.2024 09:00:00.000,1,,,,0,0,0,1
